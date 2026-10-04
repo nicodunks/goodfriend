@@ -26,21 +26,16 @@ macOS only. Tested on Claude Code 2.1.286.
 - **Contacts.** Anyone with a birthday set in the Contacts app. macOS asks once for permission.
 - **You.** Run `/seed` and GoodFriend walks through the people you've been texting and asks for the birthdays it doesn't know. macOS asks once to let it look at Messages; that's it. Or add one directly: `/goodfriend add Maya Chen 10/7`.
 - **Just tell Claude.** "Leo's birthday is actually March 3rd" works. Claude fixes it for you.
-- **Your texts (optional).** GoodFriend can look for "happy birthday" and "hbd" texts you've sent and work out the date. Someone you've wished two years running is a sure thing; one text gets a "(maybe)".
-
-Learning from your texts needs Full Disk Access for Claude, under System Settings → Privacy & Security → Full Disk Access. That's a big permission and covers more than Messages, so it's off by default. Turn it on with `/goodfriend imessage on`.
-
-Everything stays on your Mac. GoodFriend keeps names and dates, never message text.
+Everything stays on your Mac. GoodFriend only sees who you've been texting, never what you said, and keeps nothing but names and dates.
 
 ## Commands
 
 | | |
 |---|---|
-| `/seed` | fill in birthdays for the people you text most (no special access needed) |
+| `/seed` | fill in birthdays for the people you text most |
 | `/goodfriend` | list everyone, soonest first |
 | `/goodfriend add Full Name MM/DD` | add or fix a birthday |
 | `/goodfriend remove Full Name` | remove one you added |
-| `/goodfriend imessage on` / `off` | learn birthdays from your texts |
 | `/goodfriend test` | show the next birthday on your next turn |
 
 ## License

@@ -1,22 +1,14 @@
 import type { Engine, Register } from 'claude-code'
 
-// Birthdays from Contacts, /goodfriend add, /seed, and (opt-in) "happy birthday" texts you've sent in iMessage.
+// Birthdays from Contacts, /seed (the people you've been texting) and /goodfriend add.
 
-type Bday = { name: string; month: number; day: number; maybe?: boolean }
-type Person = [name: string, bday: [number, number] | null, handles: string[]]
+type Bday = { name: string; month: number; day: number }
 
 const CONTACTS = `const C = Application('Contacts')
-const n = C.people.name(), b = C.people.birthDate(), p = C.people.phones.value(), e = C.people.emails.value()
-JSON.stringify(n.map((x, i) => [x, b[i] ? [b[i].getMonth() + 1, b[i].getDate()] : null, [...(p[i] || []), ...(e[i] || [])]]))`
+const n = C.people.name(), b = C.people.birthDate()
+JSON.stringify(n.flatMap((x, i) => (b[i] ? [{ name: x, month: b[i].getMonth() + 1, day: b[i].getDate() }] : [])))`
 
-const hex = (s: string) => [...s].map(c => c.charCodeAt(0).toString(16).padStart(2, '0')).join('').toUpperCase()
-const WORDS = ['irthday', 'IRTHDAY', 'bday', 'Bday', 'BDAY', 'hbd', 'Hbd', 'HBD']
-const WISHES = `select m.text t, hex(m.attributedBody) b,
-  strftime('%Y-%m-%d', m.date / 1000000000 + 978307200, 'unixepoch', 'localtime') d,
-  (select group_concat(h.id) from chat_handle_join j join handle h on h.ROWID = j.handle_id where j.chat_id = c.chat_id) ids
-from message m join chat_message_join c on c.message_id = m.ROWID
-where m.is_from_me and (${WORDS.map(w => `instr(m.text, '${w}') or instr(hex(m.attributedBody), '${hex(w)}')`).join(' or ')})`
-// Recent one-on-one conversations, straight from the Messages app: no Full Disk Access needed
+// Recent one-on-one conversations, straight from the Messages app
 const RECENT = `tell application "Messages"
   set out to ""
   repeat with c in (chats)
@@ -28,26 +20,13 @@ const RECENT = `tell application "Messages"
   return out
 end tell`
 
-const BDAY = /happy\s+(belated\s+)?b(irth)?day|\bhbd\b/i
-const NAMED = /(?:birthday|bday|hbd)[\s,!]+([a-z]{2,})/i
 const MONTHS = 'jan feb mar apr may jun jul aug sep oct nov dec'.split(' ')
-const FDA = 'x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles'
 const DAY = 86_400_000
+const ENOUGH = "That's enough for now"
 
-const handle = (h: string) => (h.includes('@') ? h.toLowerCase() : h.replace(/\D/g, '').slice(-10))
 const first = (name: string) => name.split(' ')[0].toLowerCase()
 const any = <T>(xs: T[]) => xs[Math.floor(Math.random() * xs.length)]
-
-// iMessage stores most text in an archived NSAttributedString; pull the plain string out of its hex
-function decode(b: string): string {
-  const at = b.indexOf(hex('NSString'))
-  if (at < 0) return ''
-  let i = at / 2 + 8 + 5
-  const byte = (k: number) => parseInt(b.slice(k * 2, k * 2 + 2), 16)
-  let n = byte(i)
-  if (n === 0x81) (n = byte(i + 1) | (byte(i + 2) << 8)), (i += 2)
-  return Array.from({ length: n }, (_, k) => String.fromCharCode(byte(i + 1 + k))).join('')
-}
+const valid = (m: number, d: number): [number, number] | null => (m >= 1 && m <= 12 && d >= 1 && d <= 31 ? [m, d] : null)
 
 // "10/7", "oct 7", "October 7th", "7 Oct"
 function parseDate(s: string): [number, number] | null {
@@ -58,12 +37,6 @@ function parseDate(s: string): [number, number] | null {
   const m = MONTHS.indexOf((word[1] ?? word[4]).toLowerCase()) + 1
   return m ? valid(m, +(word[2] ?? word[3])) : null
 }
-const valid = (m: number, d: number): [number, number] | null => (m >= 1 && m <= 12 && d >= 1 && d <= 31 ? [m, d] : null)
-
-async function contacts($: Engine): Promise<Person[]> {
-  const r = await $.process.run(['osascript', '-l', 'JavaScript', '-e', CONTACTS], { timeoutMs: 90_000 })
-  return r.exitCode ? [] : JSON.parse(r.stdout)
-}
 
 // people you've texted one-on-one lately, most recent first, skipping numbers, emails and short codes
 async function recent($: Engine): Promise<string[]> {
@@ -72,47 +45,16 @@ async function recent($: Engine): Promise<string[]> {
   return [...new Set(names.filter(n => n && !/^[+\d(]/.test(n) && !n.includes('@')))]
 }
 
-// birthdays from "happy birthday" texts you've sent; null when macOS blocks the read (no Full Disk Access)
-async function texts($: Engine, people: Person[]): Promise<Bday[] | null> {
-  const db = 'sqlite3 -readonly -json "$HOME/Library/Messages/chat.db" "$1"'
-  const r = await $.process.run(['sh', '-c', db, 'sh', WISHES], { timeoutMs: 120_000 })
-  if (r.exitCode) return null
-  const rows = JSON.parse(r.stdout || '[]') as { t: string | null; b: string; d: string; ids: string | null }[]
-  const names = new Map(people.flatMap(([name, , hs]) => hs.map(h => [handle(h), name] as const)))
-  const seen = new Map<string, Map<string, string>>() // name -> year -> first "MM-DD" wished
-  for (const m of rows) {
-    const text = m.t || decode(m.b)
-    const ids = (m.ids ?? '').split(',').filter(Boolean)
-    if (!BDAY.test(text)) continue
-    const named = NAMED.exec(text)?.[1].toLowerCase()
-    const who = ids.length === 1 ? ids : ids.filter(h => first(names.get(handle(h)) ?? '') === named)
-    if (who.length !== 1) continue
-    const name = names.get(handle(who[0])) ?? who[0]
-    const years = seen.get(name) ?? new Map()
-    if (!years.has(m.d.slice(0, 4))) years.set(m.d.slice(0, 4), m.d.slice(5))
-    seen.set(name, years)
-  }
-  return [...seen].map(([name, years]) => {
-    const counts = new Map<string, number>()
-    for (const md of years.values()) counts.set(md, (counts.get(md) ?? 0) + 1)
-    const [md, n] = [...counts].sort((a, b) => b[1] - a[1])[0]
-    return { name, month: +md.slice(0, 2), day: +md.slice(3), maybe: n < 2 }
-  })
-}
-
-async function load($: Engine, fresh = false): Promise<Bday[]> {
+async function load($: Engine): Promise<Bday[]> {
   const today = new Date().toDateString()
-  const cache = (await $.store.get('cache')) as { day: string; list: Bday[] } | undefined
-  const manual = ((await $.store.get('manual')) as Bday[] | undefined) ?? []
-  let list = cache?.list ?? []
-  if (fresh || cache?.day !== today) {
-    const people = await contacts($)
-    const fromTexts = (await $.store.get('imessage')) ? ((await texts($, people)) ?? []) : []
-    list = [...people.flatMap(([name, b]) => (b ? [{ name, month: b[0], day: b[1] }] : [])), ...fromTexts]
-    await $.store.set('cache', { day: today, list })
+  let cache = (await $.store.get('contacts')) as { day: string; list: Bday[] } | undefined
+  if (cache?.day !== today) {
+    const r = await $.process.run(['osascript', '-l', 'JavaScript', '-e', CONTACTS], { timeoutMs: 90_000 })
+    cache = { day: today, list: r.exitCode ? [] : JSON.parse(r.stdout) }
+    await $.store.set('contacts', cache)
   }
-  const byName = new Map([...list, ...manual].map(b => [b.name.toLowerCase(), b])) // manual wins
-  return [...byName.values()]
+  const manual = ((await $.store.get('manual')) as Bday[] | undefined) ?? []
+  return [...new Map([...cache!.list, ...manual].map(b => [b.name.toLowerCase(), b])).values()] // manual wins
 }
 
 // add or correct; a bare first name matches someone already known when it's unambiguous
@@ -133,10 +75,10 @@ function until(b: Bday): number {
 }
 
 function line(b: Bday): string {
-  const d = until(b), maybe = b.maybe ? ' (maybe)' : ''
-  if (d === 0) return `🎂 It's ${b.name}'s birthday today${maybe}`
-  if (d === 1) return `🎂 ${b.name}'s birthday is tomorrow${maybe}`
-  if (d > 0) return `🎂 ${b.name}'s birthday is in ${d} days${maybe}`
+  const d = until(b)
+  if (d === 0) return `🎂 It's ${b.name}'s birthday today`
+  if (d === 1) return `🎂 ${b.name}'s birthday is tomorrow`
+  if (d > 0) return `🎂 ${b.name}'s birthday is in ${d} days`
   return `🎂 You missed ${b.name}'s birthday ${-d} day${d === -1 ? '' : 's'} ago`
 }
 
@@ -156,38 +98,17 @@ async function pick($: Engine): Promise<string | null> {
   return line(b)
 }
 
-// The Claude app launches Claude Code's engine as its own app in macOS's eyes, so Full Disk Access
-// given to Claude doesn't reach it. Show the person exactly which app to add.
-async function askFda($: Engine, why: string) {
-  const engine = (await $.process.run(['sh', '-c', 'ps -o comm= -p $PPID'])).stdout.trim().replace(/\/Contents\/MacOS\/.*$/, '')
-  const show = 'Show me what to add'
-  const ask = `${why} macOS treats Claude Code's engine as its own app, separate from Claude. I'll open Full Disk Access and show the engine in Finder: drag "claude" into the list, then quit and reopen Claude.`
-  if ((await $.ui.ask(ask, { header: 'GoodFriend', options: [show, 'Later'] }).catch(() => '')) !== show) return
-  await $.process.run(['open', FDA])
-  if (engine.endsWith('.app')) await $.process.run(['open', '-R', engine])
-}
-
-async function enableTexts($: Engine) {
-  await $.store.set('imessage', true)
-  const found = await texts($, await contacts($))
-  await load($, true)
-  if (found) return `🎂 Learned ${found.length} birthdays from your texts`
-  await askFda($, 'macOS is blocking Messages.')
-  return 'iMessage sync is on, waiting for Full Disk Access'
-}
-
-// /seed: walk the people you text most and fill in the birthdays GoodFriend doesn't know yet
+// /seed: walk the people you've been texting and fill in the birthdays GoodFriend doesn't know yet
 async function seed($: Engine): Promise<string> {
-  const known = new Set((await load($)).filter(b => !b.maybe).map(b => b.name.toLowerCase()))
+  const known = new Set((await load($)).map(b => b.name.toLowerCase()))
   const todo = (await recent($)).filter(n => !known.has(n.toLowerCase())).slice(0, 10)
   if (!todo.length) return "🎂 You already know everyone's birthday. Good friend."
 
   let saved = 0
   for (const [i, name] of todo.entries()) {
-    const a = await $.ui
-      .ask(`When's ${name}'s birthday? Type it under Other, like 10/7 or Oct 7.`, { header: `🎂 ${i + 1} of ${todo.length}`, options: ['Skip', "That's enough for now"] })
-      .catch(() => "That's enough for now")
-    if (a === "That's enough for now") break
+    const ask = `When's ${name}'s birthday? Type it under Other, like 10/7 or Oct 7.`
+    const a = await $.ui.ask(ask, { header: `🎂 ${i + 1} of ${todo.length}`, options: ['Skip', ENOUGH] }).catch(() => ENOUGH)
+    if (a === ENOUGH) break
     const date = parseDate(a)
     if (date) await save($, name, date[0], date[1]), saved++
     else if (a !== 'Skip') $.ui.toast(`Couldn't read "${a}", skipped ${name}`)
@@ -195,12 +116,11 @@ async function seed($: Engine): Promise<string> {
   return saved ? `🎂 Saved ${saved} birthday${saved === 1 ? '' : 's'}. Your friends are lucky to have you.` : 'Nothing saved. /seed any time.'
 }
 
-// first run: offer to seed
 async function welcome($: Engine) {
   const go = "Let's do it"
-  const ask = "GoodFriend reminds you of birthdays right here while you work. Want to add birthdays for the people you text most? It takes a minute."
-  if ((await $.ui.ask(ask, { header: 'GoodFriend', options: [go, 'Later'] }).catch(() => '')) === go) $.ui.toast(await seed($))
-  else $.ui.toast('Any time: /seed')
+  const ask = 'GoodFriend reminds you of birthdays right here while you work. Want to add birthdays for the people you text most? It takes a minute.'
+  const a = await $.ui.ask(ask, { header: 'GoodFriend', options: [go, 'Later'] }).catch(() => '')
+  $.ui.toast(a === go ? await seed($) : 'Any time: /seed')
 }
 
 export const register: Register = on => {
@@ -208,7 +128,7 @@ export const register: Register = on => {
   let test = false
 
   on('session.start', async ($, e, next) => {
-    await $.command.register({ name: 'goodfriend', description: 'Birthdays: list | add Name MM/DD | remove Name | imessage on|off | test' })
+    await $.command.register({ name: 'goodfriend', description: 'Birthdays: list | add Name MM/DD | remove Name | test' })
     await $.command.register({ name: 'seed', description: 'Fill in birthdays for the people you text most' })
     await $.tool.register({
       name: 'set_birthday',
@@ -222,7 +142,6 @@ export const register: Register = on => {
     })
     await $.tool.register({ name: 'list_birthdays', description: 'List the birthdays GoodFriend knows, as "Full Name: M/D".' })
     if (!(await $.store.get('welcomed'))) await $.store.set('welcomed', true), void welcome($)
-    void load($)
     return next(e)
   })
 
@@ -233,7 +152,7 @@ export const register: Register = on => {
   })
 
   on('tool.call', { tool: 'mcp__goodfriend__list_birthdays' }, async $ => ({
-    text: (await load($)).map(b => `${b.name}: ${b.month}/${b.day}${b.maybe ? ' (maybe)' : ''}`).join('\n') || 'None yet',
+    text: (await load($)).map(b => `${b.name}: ${b.month}/${b.day}`).join('\n') || 'None yet',
   }))
 
   on('turn.start', async ($, e, next) => {
@@ -264,12 +183,9 @@ export const register: Register = on => {
       await $.store.set('manual', manual.filter(b => b.name.toLowerCase() !== arg.toLowerCase()))
       return { text: `Removed ${arg}` }
     }
-    if (cmd === 'imessage' && arg === 'on') return { text: await enableTexts($) }
-    if (cmd === 'imessage') return await $.store.set('imessage', false), await load($, true), { text: 'iMessage sync is off' }
 
-    const list = (await load($, true)).sort((a, b) => until(a) - until(b))
-    const rows = list.map(b => `${until(b) === 0 ? '🎂' : '  '} ${b.name}: ${b.month}/${b.day}${b.maybe ? ' (maybe)' : ''}`)
-    const sync = (await $.store.get('imessage')) ? 'on' : 'off (/goodfriend imessage on)'
-    return { text: `${rows.join('\n') || 'No birthdays yet. Try /seed'}\n\niMessage sync: ${sync}` }
+    const list = (await load($)).sort((a, b) => until(a) - until(b))
+    const rows = list.map(b => `${until(b) === 0 ? '🎂' : '  '} ${b.name}: ${b.month}/${b.day}`)
+    return { text: rows.join('\n') || 'No birthdays yet. Try /seed' }
   })
 }
