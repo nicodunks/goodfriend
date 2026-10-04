@@ -34,7 +34,7 @@ const DAY = 86_400_000
 const ENOUGH = "That's enough for now"
 
 const first = (name: string) => name.split(' ')[0].toLowerCase()
-const any = <T>(xs: T[]) => xs[Math.floor(Math.random() * xs.length)]
+const any = <T,>(xs: T[]) => xs[Math.floor(Math.random() * xs.length)]
 const valid = (m: number, d: number): [number, number] | null => (m >= 1 && m <= 12 && d >= 1 && d <= 31 ? [m, d] : null)
 
 // "10/7", "oct 7", "October 7th", "7 Oct"
@@ -47,25 +47,32 @@ function parseDate(s: string): [number, number] | null {
   return m ? valid(m, +(word[2] ?? word[3])) : null
 }
 
-type Candidate = { name: string; recent: number; groups: string[]; messages?: number }
+type Candidate = { name: string; handle: string; recent: number; groups: string[]; messages?: number }
+type Chat = { size: number; title: string; members: { name: string; handle: string }[] }
+
+const realName = (n: string) => n && !/^[+\d(]/.test(n) && !n.includes('@')
+
+async function chats($: Engine): Promise<Chat[]> {
+  const r = await $.process.run(['osascript', '-e', CHATS], { timeoutMs: 120_000 })
+  return r.stdout.split('\n').filter(Boolean).map(row => {
+    const [size, title, members = ''] = row.split('|')
+    const people = members.split(';').filter(Boolean).map(m => m.split('~'))
+    return { size: +size, title, members: people.map(([n, handle]) => ({ name: n.replace(/^Maybe:\s*/, '').trim(), handle })) }
+  })
+}
 
 // everyone you talk to, with the signals that say how close you are
 async function candidates($: Engine): Promise<Candidate[]> {
-  const r = await $.process.run(['osascript', '-e', CHATS], { timeoutMs: 120_000 })
   const db = 'sqlite3 -readonly -json "$HOME/Library/Messages/chat.db" "$1"'
   const c = await $.process.run(['sh', '-c', db, 'sh', COUNTS], { timeoutMs: 60_000 })
   const counts = new Map(c.exitCode ? [] : (JSON.parse(c.stdout || '[]') as { id: string; n: number }[]).map(x => [x.id, x.n]))
   const people = new Map<string, Candidate>()
-  for (const [i, row] of r.stdout.split('\n').entries()) {
-    const [size, chat, members = ''] = row.split('|')
-    for (const m of members.split(';').filter(Boolean)) {
-      const [raw, h] = m.split('~')
-      const name = raw.replace(/^Maybe:\s*/, '').trim()
-      if (!name || /^[+\d(]/.test(name) || name.includes('@')) continue
-      const p = people.get(name) ?? { name, recent: Infinity, groups: [] }
-      if (size === '1') p.recent = Math.min(p.recent, i + 1)
-      else p.groups.push(chat || 'unnamed group')
-      if (counts.has(h)) p.messages = (p.messages ?? 0) + counts.get(h)!
+  for (const [i, chat] of (await chats($)).entries()) {
+    for (const { name, handle } of chat.members.filter(m => realName(m.name))) {
+      const p = people.get(name) ?? { name, handle, recent: Infinity, groups: [] }
+      if (chat.size === 1) p.recent = Math.min(p.recent, i + 1)
+      else p.groups.push(chat.title || 'unnamed group')
+      if (counts.has(handle)) p.messages = (p.messages ?? 0) + counts.get(handle)!
       people.set(name, p)
     }
   }
@@ -134,7 +141,7 @@ function line(b: Bday): string {
 
 // Birthday today: 40% of turns for its first 3 showings, then 5%. Otherwise 5% for the week ahead / 3 days behind.
 async function pick($: Engine): Promise<string | null> {
-  const near = (await load($)).filter(b => until(b) <= 7)
+  const near = await unwished($, (await load($)).filter(b => until(b) <= 7))
   const todays = near.filter(b => until(b) === 0)
   if (!todays.length) return near.length && Math.random() < 0.05 ? line(any(near)) : null
   const day = new Date().toDateString()
@@ -146,6 +153,41 @@ async function pick($: Engine): Promise<string | null> {
   n[b.name] = (n[b.name] ?? 0) + 1
   await $.store.set('shown', { day, n })
   return line(b)
+}
+
+// You've wished them once you text from the band (or say you already did); reminders stop for 10 days
+async function unwished($: Engine, list: Bday[]): Promise<Bday[]> {
+  const wished = ((await $.store.get('wished')) as Record<string, number> | undefined) ?? {}
+  return list.filter(b => !(Date.now() - (wished[b.name] ?? 0) < 10 * DAY))
+}
+
+async function markWished($: Engine, b: Bday) {
+  const wished = ((await $.store.get('wished')) as Record<string, number> | undefined) ?? {}
+  await $.store.set('wished', { ...wished, [b.name]: Date.now() })
+}
+
+// someone whose birthday is today or was in the last 2 days, and who you haven't wished yet
+async function due($: Engine): Promise<Bday | undefined> {
+  return (await unwished($, await load($))).filter(b => until(b) <= 0 && until(b) >= -2).sort((a, b) => until(b) - until(a))[0]
+}
+
+// their number or email: from your conversations, else from Contacts
+async function handleFor($: Engine, name: string): Promise<string> {
+  const people = (await chats($)).sort((a, b) => a.size - b.size).flatMap(c => c.members)
+  const fromChats = people.find(m => m.name === name)?.handle
+  if (fromChats) return fromChats
+  const js = `const p = Application('Contacts').people.whose({ name: ${JSON.stringify(name)} })()
+p.length ? p[0].phones.value()[0] || p[0].emails.value()[0] || '' : ''`
+  return (await $.process.run(['osascript', '-l', 'JavaScript', '-e', js])).stdout.trim()
+}
+
+// open Messages with the wish already typed; you press send
+async function textThem($: Engine, b: Bday) {
+  const handle = await handleFor($, b.name)
+  if (!handle) return $.ui.toast(`Couldn't find a number for ${b.name}`)
+  const wish = until(b) === 0 ? 'Happy birthday! 🎂' : 'Happy belated birthday! 🎂'
+  await $.process.run(['open', `sms:${handle}&body=${encodeURIComponent(wish)}`])
+  await markWished($, b)
 }
 
 // /seed: walk the people who matter most to you and fill in the birthdays GoodFriend doesn't know yet
@@ -211,6 +253,21 @@ export const register: Register = on => {
     current = soonest ? line(soonest) : await pick($)
     test = false
     return next(e)
+  })
+
+  // the birthday band above the prompt, with a button to text them
+  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    const b = e.props.hasSurvey ? undefined : await due($)
+    if (!b) return next(e)
+    const { Box, Button, Text } = $.ui.resolve(e)
+    return (
+      <Box>
+        <Text>{line(b)} </Text>
+        <Button key="text" variant="primary" label={`Text ${b.name.split(' ')[0]}`} onPress={() => textThem($, b)} />
+        <Text> </Text>
+        <Button key="done" label="Already did" onPress={() => markWished($, b)} />
+      </Box>
+    )
   })
 
   on('ui.render', { component: 'Spinner' }, ($, e, next) => next(current ? { ...e, props: { ...e.props, word: current } } : e))
