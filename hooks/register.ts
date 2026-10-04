@@ -74,7 +74,7 @@ async function candidates($: Engine): Promise<Candidate[]> {
 
 const named = (p: Candidate) => p.groups.filter(g => g !== 'unnamed group')
 
-// let a fast model use judgment (family, close friends) over the raw signals; recency if it can't
+// let Sonnet use judgment (family, close friends) over the raw signals; recency if it can't
 async function rank($: Engine, list: Candidate[], me: string): Promise<string[]> {
   const top = list.sort((a, b) => (b.messages ?? 0) - (a.messages ?? 0) || a.recent - b.recent || b.groups.length - a.groups.length).slice(0, 80)
   const facts = top.map(p =>
@@ -87,7 +87,7 @@ async function rank($: Engine, list: Candidate[], me: string): Promise<string[]>
 ${facts.join('\n')}
 
 Reply with only a JSON array of names, exactly as written above.`
-  const r = await $.model.complete({ model: 'haiku', prompt, maxTokens: 400, timeoutMs: 30_000 })
+  const r = await $.model.complete({ model: 'claude-sonnet-5-5', prompt, maxTokens: 400, timeoutMs: 60_000 })
   const names = new Set(top.map(p => p.name))
   try {
     if (r.isAnswered) return (JSON.parse(/\[[\s\S]*\]/.exec(r.text)![0]) as string[]).filter(n => names.has(n)).slice(0, 10)
