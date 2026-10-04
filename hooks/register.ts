@@ -197,7 +197,7 @@ export const register: Register = on => {
   })
 
   on('tool.call', { tool: 'mcp__goodfriend__set_birthday' }, async ($, e) => {
-    const { name, month, day } = e.input as { name: string; month: number; day: number }
+    const { name, month, day } = e as unknown as { name: string; month: number; day: number } // a tool's arguments ride on the event itself
     const b = await save($, name, month, day)
     return { result: `Saved ${b.name}: ${b.month}/${b.day}` }
   })
@@ -223,10 +223,12 @@ export const register: Register = on => {
 
     if (cmd === 'test') return (test = true), { text: 'Next turn shows the soonest birthday.' }
     if (cmd === 'add') {
-      const m = /^(.+?)\s+(\S+(?:\s+\d{1,2})?)$/.exec(arg)
-      const date = m && parseDate(m[2])
-      if (!m || !date) return { text: 'Usage: /goodfriend add Full Name MM/DD' }
-      const b = await save($, m[1], date[0], date[1])
+      // the date is the last one or two words: "10/7", "Oct 7", "7th October"
+      const words = arg.split(' ')
+      const split = [2, 1].map(k => [words.slice(0, -k).join(' '), parseDate(words.slice(-k).join(' '))] as const).find(([n, d]) => n && d)
+      if (!split) return { text: 'Usage: /goodfriend add Full Name MM/DD' }
+      const [name, [month, day]] = split as [string, [number, number]]
+      const b = await save($, name, month, day)
       return { text: `🎂 Saved ${b.name}: ${b.month}/${b.day}` }
     }
     if (cmd === 'remove') {
