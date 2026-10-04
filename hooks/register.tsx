@@ -132,10 +132,10 @@ function line(b: Bday): string {
 }
 
 // Birthday today: 40% of turns for its first 3 showings, then 5%. Otherwise 5% for the week ahead / 3 days behind.
-async function pick($: Engine): Promise<string | null> {
+async function pick($: Engine): Promise<Bday | null> {
   const near = await unwished($, (await load($)).filter(b => until(b) <= 7))
   const todays = near.filter(b => until(b) === 0)
-  if (!todays.length) return near.length && Math.random() < 0.05 ? line(any(near)) : null
+  if (!todays.length) return near.length && Math.random() < 0.05 ? any(near) : null
   const day = new Date().toDateString()
   const shown = (await $.store.get('shown')) as { day: string; n: Record<string, number> } | undefined
   const n = (shown?.day === day && shown.n) || {}
@@ -144,10 +144,10 @@ async function pick($: Engine): Promise<string | null> {
   if (!b) return null
   n[b.name] = (n[b.name] ?? 0) + 1
   await $.store.set('shown', { day, n })
-  return line(b)
+  return b
 }
 
-// You've wished them once you text from the band (or say you already did); reminders stop for 10 days
+// You've wished them once you press Text; reminders stop for 10 days
 async function unwished($: Engine, list: Bday[]): Promise<Bday[]> {
   const wished = ((await $.store.get('wished')) as Record<string, number> | undefined) ?? {}
   return list.filter(b => !(Date.now() - (wished[b.name] ?? 0) < 10 * DAY))
@@ -156,12 +156,7 @@ async function unwished($: Engine, list: Bday[]): Promise<Bday[]> {
 async function markWished($: Engine, b: Bday) {
   const wished = ((await $.store.get('wished')) as Record<string, number> | undefined) ?? {}
   await $.store.set('wished', { ...wished, [b.name]: Date.now() })
-  $.ui.invalidate('ui.render') // take the band down now
-}
-
-// someone whose birthday is today or was in the last 2 days, and who you haven't wished yet
-async function due($: Engine): Promise<Bday | undefined> {
-  return (await unwished($, await load($))).filter(b => until(b) <= 0 && until(b) >= -2).sort((a, b) => until(b) - until(a))[0]
+  $.ui.invalidate('ui.render') // the spinner goes back to normal now
 }
 
 // their number or email: from your conversations, else from Contacts
@@ -210,7 +205,7 @@ async function welcome($: Engine) {
 }
 
 export const register: Register = on => {
-  let current: string | null = null
+  let current: Bday | null = null
   let test = false
 
   on('session.start', async ($, e, next) => {
@@ -242,28 +237,25 @@ export const register: Register = on => {
   }))
 
   on('turn.start', async ($, e, next) => {
-    const soonest = test ? (await load($)).sort((a, b) => until(a) - until(b))[0] : undefined
-    current = soonest ? line(soonest) : await pick($)
+    current = test ? (await load($)).sort((a, b) => until(a) - until(b))[0] : await pick($)
     test = false
     return next(e)
   })
 
-  // the birthday band above the prompt, with a button to text them
-  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    const b = e.props.hasSurvey ? undefined : await due($)
+  // the spinner: a heads-up as its word, or on the day (and 2 days after) the whole line with a button to text them
+  on('ui.render', { component: 'Spinner' }, async ($, e, next) => {
+    const b = current
     if (!b) return next(e)
+    if (until(b) > 0 || until(b) < -2) return next({ ...e, props: { ...e.props, word: line(b) } })
     const { Box, Button, Text } = $.ui.resolve(e)
+    const press = () => ((current = null), textThem($, b))
     return (
       <Box>
         <Text>{line(b)} </Text>
-        <Button key="text" variant="primary" label={`Text ${b.name.split(' ')[0]}`} onPress={() => textThem($, b)} />
-        <Text> </Text>
-        <Button key="done" label="Already did" onPress={() => markWished($, b)} />
+        <Button key="text" variant="primary" label={`Text ${b.name.split(' ')[0]}`} onPress={press} />
       </Box>
     )
   })
-
-  on('ui.render', { component: 'Spinner' }, ($, e, next) => next(current ? { ...e, props: { ...e.props, word: current } } : e))
 
   on('command.run', { command: 'seed' }, async $ => ({ text: await seed($) }))
 

@@ -10,10 +10,10 @@ GoodFriend is a Claude Code mod. Every so often, the spinner that normally says 
 🎂 You missed Sam Rivera's birthday 2 days ago
 ```
 
-On the day (or if you just missed it), a little bar above the prompt offers to text them:
+On the day (or if you just missed it), the spinner gets a button:
 
 ```
-🎂 It's Maya Chen's birthday today  [ Text Maya ]  [ Already did ]
+🎂 It's Maya Chen's birthday today  [ Text Maya ]
 ```
 
 **Text Maya** opens Messages with "Happy birthday! 🎂" already typed to her. You press send. After that, GoodFriend stops reminding you.
