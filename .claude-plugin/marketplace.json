@@ -1,0 +1,11 @@
+{
+  "name": "goodfriend",
+  "owner": { "name": "Nico Christie" },
+  "plugins": [
+    {
+      "name": "goodfriend",
+      "source": "./",
+      "description": "Be a GoodFriend and remember your friends' birthdays."
+    }
+  ]
+}
