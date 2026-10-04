@@ -156,6 +156,7 @@ async function unwished($: Engine, list: Bday[]): Promise<Bday[]> {
 async function markWished($: Engine, b: Bday) {
   const wished = ((await $.store.get('wished')) as Record<string, number> | undefined) ?? {}
   await $.store.set('wished', { ...wished, [b.name]: Date.now() })
+  $.ui.invalidate('ui.render') // take the band down now
 }
 
 // someone whose birthday is today or was in the last 2 days, and who you haven't wished yet
