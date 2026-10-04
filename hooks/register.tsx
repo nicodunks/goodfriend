@@ -25,10 +25,6 @@ const CHATS = `tell application "Messages"
   return out
 end tell`
 
-// Messages sent and received per person over the last year. Only readable with Full Disk Access; used when it happens to be there.
-const COUNTS = `select h.id id, count(*) n from message m join handle h on h.ROWID = m.handle_id
-where m.date > (strftime('%s', 'now', '-365 days') - 978307200) * 1000000000 group by h.id`
-
 const MONTHS = 'jan feb mar apr may jun jul aug sep oct nov dec'.split(' ')
 const DAY = 86_400_000
 const ENOUGH = "That's enough for now"
@@ -47,7 +43,7 @@ function parseDate(s: string): [number, number] | null {
   return m ? valid(m, +(word[2] ?? word[3])) : null
 }
 
-type Candidate = { name: string; handle: string; recent: number; groups: string[]; messages?: number }
+type Candidate = { name: string; handle: string; recent: number; groups: string[] }
 type Chat = { size: number; title: string; members: { name: string; handle: string }[] }
 
 const realName = (n: string) => n && !/^[+\d(]/.test(n) && !n.includes('@')
@@ -63,16 +59,12 @@ async function chats($: Engine): Promise<Chat[]> {
 
 // everyone you talk to, with the signals that say how close you are
 async function candidates($: Engine): Promise<Candidate[]> {
-  const db = 'sqlite3 -readonly -json "$HOME/Library/Messages/chat.db" "$1"'
-  const c = await $.process.run(['sh', '-c', db, 'sh', COUNTS], { timeoutMs: 60_000 })
-  const counts = new Map(c.exitCode ? [] : (JSON.parse(c.stdout || '[]') as { id: string; n: number }[]).map(x => [x.id, x.n]))
   const people = new Map<string, Candidate>()
   for (const [i, chat] of (await chats($)).entries()) {
     for (const { name, handle } of chat.members.filter(m => realName(m.name))) {
       const p = people.get(name) ?? { name, handle, recent: Infinity, groups: [] }
       if (chat.size === 1) p.recent = Math.min(p.recent, i + 1)
       else p.groups.push(chat.title || 'unnamed group')
-      if (counts.has(handle)) p.messages = (p.messages ?? 0) + counts.get(handle)!
       people.set(name, p)
     }
   }
@@ -83,9 +75,9 @@ const named = (p: Candidate) => p.groups.filter(g => g !== 'unnamed group')
 
 // let Sonnet use judgment (family, close friends) over the raw signals; recency if it can't
 async function rank($: Engine, list: Candidate[], me: string): Promise<string[]> {
-  const top = list.sort((a, b) => (b.messages ?? 0) - (a.messages ?? 0) || a.recent - b.recent || b.groups.length - a.groups.length).slice(0, 80)
+  const top = list.sort((a, b) => a.recent - b.recent || b.groups.length - a.groups.length).slice(0, 80)
   const facts = top.map(p =>
-    [p.name, p.recent < Infinity && `texted 1:1 (#${p.recent} most recent)`, p.messages && `${p.messages} messages this year`, p.groups.length && `in ${p.groups.length} group chats with me${named(p).length ? `: ${named(p).slice(0, 4).join(', ')}` : ''}`]
+    [p.name, p.recent < Infinity && `texted 1:1 (#${p.recent} most recent)`, p.groups.length && `in ${p.groups.length} group chats with me${named(p).length ? `: ${named(p).slice(0, 4).join(', ')}` : ''}`]
       .filter(Boolean)
       .join(' · '),
   )

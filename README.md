@@ -27,7 +27,7 @@ It doesn't nag. On someone's birthday you'll see it a few times early on, then r
 /plugin install goodfriend@goodfriend
 ```
 
-macOS only. Tested on Claude Code 2.1.286.
+macOS only. Needs Claude Code 2.1.286 or newer.
 
 ## Where birthdays come from
 
