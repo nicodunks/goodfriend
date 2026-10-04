@@ -28,7 +28,7 @@ macOS only. Tested on Claude Code 2.1.286.
 - **Just tell Claude.** "Leo's birthday is actually March 3rd" works. Claude fixes it for you.
 - **Your texts (optional).** GoodFriend can look for "happy birthday" and "hbd" texts you've sent and work out the date. Someone you've wished two years running is a sure thing; one text gets a "(maybe)".
 
-Learning from your texts needs Full Disk Access for Claude, under System Settings → Privacy & Security → Full Disk Access. That's a big permission and covers more than Messages, so it's off unless you say yes. GoodFriend asks once, and you can change your mind with `/goodfriend imessage on` or `off`.
+Learning from your texts needs Full Disk Access for Claude, under System Settings → Privacy & Security → Full Disk Access. That's a big permission and covers more than Messages, so it's off by default. Turn it on with `/goodfriend imessage on`.
 
 Everything stays on your Mac. GoodFriend keeps names and dates, never message text.
 
