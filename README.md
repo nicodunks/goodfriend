@@ -24,11 +24,11 @@ macOS only. Tested on Claude Code 2.1.286.
 ## Where birthdays come from
 
 - **Contacts.** Anyone with a birthday set in the Contacts app. macOS asks once for permission.
-- **You.** Run `/seed` and GoodFriend walks through the people you text most and asks for the birthdays it doesn't know. Or add one directly: `/goodfriend add Maya Chen 10/7`.
+- **You.** Run `/seed` and GoodFriend walks through the people you've been texting and asks for the birthdays it doesn't know. macOS asks once to let it look at Messages; that's it. Or add one directly: `/goodfriend add Maya Chen 10/7`.
 - **Just tell Claude.** "Leo's birthday is actually March 3rd" works. Claude fixes it for you.
 - **Your texts (optional).** GoodFriend can look for "happy birthday" and "hbd" texts you've sent and work out the date. Someone you've wished two years running is a sure thing; one text gets a "(maybe)".
 
-Reading Messages (for `/seed` and texts) needs Full Disk Access for Claude, under System Settings → Privacy & Security → Full Disk Access. That's a big permission and covers more than Messages, so it's off unless you say yes. GoodFriend asks once, and you can change your mind with `/goodfriend imessage on` or `off`.
+Learning from your texts needs Full Disk Access for Claude, under System Settings → Privacy & Security → Full Disk Access. That's a big permission and covers more than Messages, so it's off unless you say yes. GoodFriend asks once, and you can change your mind with `/goodfriend imessage on` or `off`.
 
 Everything stays on your Mac. GoodFriend keeps names and dates, never message text.
 
@@ -36,7 +36,7 @@ Everything stays on your Mac. GoodFriend keeps names and dates, never message te
 
 | | |
 |---|---|
-| `/seed` | fill in birthdays for the people you text most |
+| `/seed` | fill in birthdays for the people you text most (no special access needed) |
 | `/goodfriend` | list everyone, soonest first |
 | `/goodfriend add Full Name MM/DD` | add or fix a birthday |
 | `/goodfriend remove Full Name` | remove one you added |

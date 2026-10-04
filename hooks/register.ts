@@ -16,8 +16,17 @@ const WISHES = `select m.text t, hex(m.attributedBody) b,
   (select group_concat(h.id) from chat_handle_join j join handle h on h.ROWID = j.handle_id where j.chat_id = c.chat_id) ids
 from message m join chat_message_join c on c.message_id = m.ROWID
 where m.is_from_me and (${WORDS.map(w => `instr(m.text, '${w}') or instr(hex(m.attributedBody), '${hex(w)}')`).join(' or ')})`
-const CLOSEST = `select h.id id, count(*) n from message m join handle h on h.ROWID = m.handle_id
-where m.date > (strftime('%s', 'now', '-365 days') - 978307200) * 1000000000 group by h.id order by n desc limit 60`
+// Recent one-on-one conversations, straight from the Messages app: no Full Disk Access needed
+const RECENT = `tell application "Messages"
+  set out to ""
+  repeat with c in (chats)
+    try
+      set ps to participants of c
+      if (count of ps) is 1 then set out to out & (name of item 1 of ps) & linefeed
+    end try
+  end repeat
+  return out
+end tell`
 
 const BDAY = /happy\s+(belated\s+)?b(irth)?day|\bhbd\b/i
 const NAMED = /(?:birthday|bday|hbd)[\s,!]+([a-z]{2,})/i
@@ -56,19 +65,20 @@ async function contacts($: Engine): Promise<Person[]> {
   return r.exitCode ? [] : JSON.parse(r.stdout)
 }
 
-// rows from the Messages database, or null when macOS blocks the read (no Full Disk Access)
-async function messages<T>($: Engine, sql: string): Promise<T[] | null> {
-  const db = 'sqlite3 -readonly -json "$HOME/Library/Messages/chat.db" "$1"'
-  const r = await $.process.run(['sh', '-c', db, 'sh', sql], { timeoutMs: 120_000 })
-  return r.exitCode ? null : JSON.parse(r.stdout || '[]')
+// people you've texted one-on-one lately, most recent first, skipping numbers, emails and short codes
+async function recent($: Engine): Promise<string[]> {
+  const r = await $.process.run(['osascript', '-e', RECENT], { timeoutMs: 120_000 })
+  const names = r.stdout.split('\n').map(n => n.replace(/^Maybe:\s*/, '').trim())
+  return [...new Set(names.filter(n => n && !/^[+\d(]/.test(n) && !n.includes('@')))]
 }
 
-const byHandle = (people: Person[]) => new Map(people.flatMap(([name, , hs]) => hs.map(h => [handle(h), name] as const)))
-
+// birthdays from "happy birthday" texts you've sent; null when macOS blocks the read (no Full Disk Access)
 async function texts($: Engine, people: Person[]): Promise<Bday[] | null> {
-  const rows = await messages<{ t: string | null; b: string; d: string; ids: string | null }>($, WISHES)
-  if (!rows) return null
-  const names = byHandle(people)
+  const db = 'sqlite3 -readonly -json "$HOME/Library/Messages/chat.db" "$1"'
+  const r = await $.process.run(['sh', '-c', db, 'sh', WISHES], { timeoutMs: 120_000 })
+  if (r.exitCode) return null
+  const rows = JSON.parse(r.stdout || '[]') as { t: string | null; b: string; d: string; ids: string | null }[]
+  const names = new Map(people.flatMap(([name, , hs]) => hs.map(h => [handle(h), name] as const)))
   const seen = new Map<string, Map<string, string>>() // name -> year -> first "MM-DD" wished
   for (const m of rows) {
     const text = m.t || decode(m.b)
@@ -166,26 +176,10 @@ async function enableTexts($: Engine) {
   return 'iMessage sync is on, waiting for Full Disk Access'
 }
 
-async function offer($: Engine) {
-  const yes = 'Yes, learn from my texts (requires Full Disk Access)'
-  const ask = 'GoodFriend can learn birthdays from "happy birthday" texts you\'ve sent. This requires giving Claude Full Disk Access in macOS settings. Turn on iMessage sync?'
-  const a = await $.ui.ask(ask, { header: 'GoodFriend', options: [yes, 'No thanks'] }).catch(() => '')
-  $.ui.toast(a === yes ? await enableTexts($) : 'No problem. Turn it on later with /goodfriend imessage on')
-}
-
 // /seed: walk the people you text most and fill in the birthdays GoodFriend doesn't know yet
 async function seed($: Engine): Promise<string> {
-  const people = await contacts($)
-  const rows = await messages<{ id: string; n: number }>($, CLOSEST)
-  if (!rows) {
-    await askFda($, 'To know who you text most, GoodFriend needs to read Messages.')
-    return 'Run /seed again once Full Disk Access is on, or add people with /goodfriend add Full Name MM/DD'
-  }
-  const names = byHandle(people)
   const known = new Set((await load($)).filter(b => !b.maybe).map(b => b.name.toLowerCase()))
-  const todo = [...new Set(rows.map(r => names.get(handle(r.id))).filter((n): n is string => !!n))]
-    .filter(n => !known.has(n.toLowerCase()))
-    .slice(0, 10)
+  const todo = (await recent($)).filter(n => !known.has(n.toLowerCase())).slice(0, 10)
   if (!todo.length) return "🎂 You already know everyone's birthday. Good friend."
 
   let saved = 0
@@ -199,6 +193,14 @@ async function seed($: Engine): Promise<string> {
     else if (a !== 'Skip') $.ui.toast(`Couldn't read "${a}", skipped ${name}`)
   }
   return saved ? `🎂 Saved ${saved} birthday${saved === 1 ? '' : 's'}. Your friends are lucky to have you.` : 'Nothing saved. /seed any time.'
+}
+
+// first run: offer to seed
+async function welcome($: Engine) {
+  const go = "Let's do it"
+  const ask = "GoodFriend reminds you of birthdays right here while you work. Want to add birthdays for the people you text most? It takes a minute."
+  if ((await $.ui.ask(ask, { header: 'GoodFriend', options: [go, 'Later'] }).catch(() => '')) === go) $.ui.toast(await seed($))
+  else $.ui.toast('Any time: /seed')
 }
 
 export const register: Register = on => {
@@ -219,7 +221,7 @@ export const register: Register = on => {
       },
     })
     await $.tool.register({ name: 'list_birthdays', description: 'List the birthdays GoodFriend knows, as "Full Name: M/D".' })
-    if (!(await $.store.get('asked'))) await $.store.set('asked', true), void offer($)
+    if (!(await $.store.get('welcomed'))) await $.store.set('welcomed', true), void welcome($)
     void load($)
     return next(e)
   })
