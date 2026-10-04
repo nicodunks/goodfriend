@@ -26,6 +26,7 @@ macOS only. Tested on Claude Code 2.1.286.
 - **Contacts.** Anyone with a birthday set in the Contacts app. macOS asks once for permission.
 - **You.** Run `/seed` and GoodFriend walks through the people you've been texting and asks for the birthdays it doesn't know. macOS asks once to let it look at Messages; that's it. Or add one directly: `/goodfriend add Maya Chen 10/7`.
 - **Just tell Claude.** "Leo's birthday is actually March 3rd" works. Claude fixes it for you.
+
 Everything stays on your Mac. GoodFriend only sees who you've been texting, never what you said, and keeps nothing but names and dates.
 
 ## Commands
