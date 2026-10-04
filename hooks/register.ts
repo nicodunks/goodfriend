@@ -146,12 +146,15 @@ async function pick($: Engine): Promise<string | null> {
   return line(b)
 }
 
+// The Claude app launches Claude Code's engine as its own app in macOS's eyes, so Full Disk Access
+// given to Claude doesn't reach it. Show the person exactly which app to add.
 async function askFda($: Engine, why: string) {
-  const open = 'Open Full Disk Access settings'
-  const a = await $.ui
-    .ask(`${why} Turn on Full Disk Access for Claude, then quit and reopen Claude.`, { header: 'GoodFriend', options: [open, 'Later'] })
-    .catch(() => '')
-  if (a === open) await $.process.run(['open', FDA])
+  const engine = (await $.process.run(['sh', '-c', 'ps -o comm= -p $PPID'])).stdout.trim().replace(/\/Contents\/MacOS\/.*$/, '')
+  const show = 'Show me what to add'
+  const ask = `${why} macOS treats Claude Code's engine as its own app, separate from Claude. I'll open Full Disk Access and show the engine in Finder: drag "claude" into the list, then quit and reopen Claude.`
+  if ((await $.ui.ask(ask, { header: 'GoodFriend', options: [show, 'Later'] }).catch(() => '')) !== show) return
+  await $.process.run(['open', FDA])
+  if (engine.endsWith('.app')) await $.process.run(['open', '-R', engine])
 }
 
 async function enableTexts($: Engine) {
@@ -172,9 +175,6 @@ async function offer($: Engine) {
 
 // /seed: walk the people you text most and fill in the birthdays GoodFriend doesn't know yet
 async function seed($: Engine): Promise<string> {
-  const go = "Let's do it"
-  const intro = "Let's fill in birthdays for the people you talk to most. I'll go one by one; skip anyone you're not sure about."
-  if ((await $.ui.ask(intro, { header: 'GoodFriend', options: [go, 'Not now'] }).catch(() => '')) !== go) return 'Maybe later 🎂'
   const people = await contacts($)
   const rows = await messages<{ id: string; n: number }>($, CLOSEST)
   if (!rows) {
