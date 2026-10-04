@@ -8,17 +8,26 @@ const CONTACTS = `const C = Application('Contacts')
 const n = C.people.name(), b = C.people.birthDate()
 JSON.stringify(n.flatMap((x, i) => (b[i] ? [{ name: x, month: b[i].getMonth() + 1, day: b[i].getDate() }] : [])))`
 
-// Recent one-on-one conversations, straight from the Messages app
-const RECENT = `tell application "Messages"
+// Every conversation, most recent first: "member count|chat name|name~handle;name~handle;"
+const CHATS = `tell application "Messages"
   set out to ""
   repeat with c in (chats)
     try
-      set ps to participants of c
-      if (count of ps) is 1 then set out to out & (name of item 1 of ps) & linefeed
+      set ns to ""
+      repeat with p in (participants of c)
+        set ns to ns & (name of p) & "~" & (handle of p) & ";"
+      end repeat
+      set n to name of c
+      if n is missing value then set n to ""
+      set out to out & (count of participants of c) & "|" & n & "|" & ns & linefeed
     end try
   end repeat
   return out
 end tell`
+
+// Messages sent and received per person over the last year. Only readable with Full Disk Access; used when it happens to be there.
+const COUNTS = `select h.id id, count(*) n from message m join handle h on h.ROWID = m.handle_id
+where m.date > (strftime('%s', 'now', '-365 days') - 978307200) * 1000000000 group by h.id`
 
 const MONTHS = 'jan feb mar apr may jun jul aug sep oct nov dec'.split(' ')
 const DAY = 86_400_000
@@ -38,11 +47,52 @@ function parseDate(s: string): [number, number] | null {
   return m ? valid(m, +(word[2] ?? word[3])) : null
 }
 
-// people you've texted one-on-one lately, most recent first, skipping numbers, emails and short codes
-async function recent($: Engine): Promise<string[]> {
-  const r = await $.process.run(['osascript', '-e', RECENT], { timeoutMs: 120_000 })
-  const names = r.stdout.split('\n').map(n => n.replace(/^Maybe:\s*/, '').trim())
-  return [...new Set(names.filter(n => n && !/^[+\d(]/.test(n) && !n.includes('@')))]
+type Candidate = { name: string; recent: number; groups: string[]; messages?: number }
+
+// everyone you talk to, with the signals that say how close you are
+async function candidates($: Engine): Promise<Candidate[]> {
+  const r = await $.process.run(['osascript', '-e', CHATS], { timeoutMs: 120_000 })
+  const db = 'sqlite3 -readonly -json "$HOME/Library/Messages/chat.db" "$1"'
+  const c = await $.process.run(['sh', '-c', db, 'sh', COUNTS], { timeoutMs: 60_000 })
+  const counts = new Map(c.exitCode ? [] : (JSON.parse(c.stdout || '[]') as { id: string; n: number }[]).map(x => [x.id, x.n]))
+  const people = new Map<string, Candidate>()
+  for (const [i, row] of r.stdout.split('\n').entries()) {
+    const [size, chat, members = ''] = row.split('|')
+    for (const m of members.split(';').filter(Boolean)) {
+      const [raw, h] = m.split('~')
+      const name = raw.replace(/^Maybe:\s*/, '').trim()
+      if (!name || /^[+\d(]/.test(name) || name.includes('@')) continue
+      const p = people.get(name) ?? { name, recent: Infinity, groups: [] }
+      if (size === '1') p.recent = Math.min(p.recent, i + 1)
+      else p.groups.push(chat || 'unnamed group')
+      if (counts.has(h)) p.messages = (p.messages ?? 0) + counts.get(h)!
+      people.set(name, p)
+    }
+  }
+  return [...people.values()]
+}
+
+const named = (p: Candidate) => p.groups.filter(g => g !== 'unnamed group')
+
+// let a fast model use judgment (family, close friends) over the raw signals; recency if it can't
+async function rank($: Engine, list: Candidate[], me: string): Promise<string[]> {
+  const top = list.sort((a, b) => (b.messages ?? 0) - (a.messages ?? 0) || a.recent - b.recent || b.groups.length - a.groups.length).slice(0, 80)
+  const facts = top.map(p =>
+    [p.name, p.recent < Infinity && `texted 1:1 (#${p.recent} most recent)`, p.messages && `${p.messages} messages this year`, p.groups.length && `in ${p.groups.length} group chats with me${named(p).length ? `: ${named(p).slice(0, 4).join(', ')}` : ''}`]
+      .filter(Boolean)
+      .join(' · '),
+  )
+  const prompt = `I'm ${me || 'the user'}. Pick the 10 people whose birthdays I'd most regret forgetting, most important first. Family comes first (Mom, Dad, grandparents, siblings, anyone sharing my last name or in family group chats), then the friends I talk to most. Skip businesses and bots.
+
+${facts.join('\n')}
+
+Reply with only a JSON array of names, exactly as written above.`
+  const r = await $.model.complete({ model: 'haiku', prompt, maxTokens: 400, timeoutMs: 30_000 })
+  const names = new Set(top.map(p => p.name))
+  try {
+    if (r.isAnswered) return (JSON.parse(/\[[\s\S]*\]/.exec(r.text)![0]) as string[]).filter(n => names.has(n)).slice(0, 10)
+  } catch {}
+  return top.slice(0, 10).map(p => p.name)
 }
 
 async function load($: Engine): Promise<Bday[]> {
@@ -98,10 +148,11 @@ async function pick($: Engine): Promise<string | null> {
   return line(b)
 }
 
-// /seed: walk the people you've been texting and fill in the birthdays GoodFriend doesn't know yet
+// /seed: walk the people who matter most to you and fill in the birthdays GoodFriend doesn't know yet
 async function seed($: Engine): Promise<string> {
   const known = new Set((await load($)).map(b => b.name.toLowerCase()))
-  const todo = (await recent($)).filter(n => !known.has(n.toLowerCase())).slice(0, 10)
+  const me = (await $.process.run(['osascript', '-l', 'JavaScript', '-e', "Application('Contacts').myCard().name()"])).stdout.trim()
+  const todo = await rank($, (await candidates($)).filter(p => !known.has(p.name.toLowerCase()) && p.name !== me), me)
   if (!todo.length) return "🎂 You already know everyone's birthday. Good friend."
 
   let saved = 0

@@ -24,10 +24,10 @@ macOS only. Tested on Claude Code 2.1.286.
 ## Where birthdays come from
 
 - **Contacts.** Anyone with a birthday set in the Contacts app. macOS asks once for permission.
-- **You.** Run `/seed` and GoodFriend walks through the people you've been texting and asks for the birthdays it doesn't know. macOS asks once to let it look at Messages; that's it. Or add one directly: `/goodfriend add Maya Chen 10/7`.
+- **You.** Run `/seed` and GoodFriend works out who matters most to you (family first, then the friends you talk to most, judged from your conversations and group chats) and asks for the birthdays it doesn't know. macOS asks once to let it look at Messages; that's it. Or add one directly: `/goodfriend add Maya Chen 10/7`.
 - **Just tell Claude.** "Leo's birthday is actually March 3rd" works. Claude fixes it for you.
 
-Everything stays on your Mac. GoodFriend only sees who you've been texting, never what you said, and keeps nothing but names and dates.
+GoodFriend only sees who you talk to and the names of your group chats, never what you said. To rank people, it sends that list of names to Claude through your own Claude Code session. Birthdays are saved on your Mac.
 
 ## Commands
 
