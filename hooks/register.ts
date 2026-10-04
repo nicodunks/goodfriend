@@ -199,11 +199,11 @@ export const register: Register = on => {
   on('tool.call', { tool: 'mcp__goodfriend__set_birthday' }, async ($, e) => {
     const { name, month, day } = e.input as { name: string; month: number; day: number }
     const b = await save($, name, month, day)
-    return { text: `Saved ${b.name}: ${b.month}/${b.day}` }
+    return { result: `Saved ${b.name}: ${b.month}/${b.day}` }
   })
 
   on('tool.call', { tool: 'mcp__goodfriend__list_birthdays' }, async $ => ({
-    text: (await load($)).map(b => `${b.name}: ${b.month}/${b.day}`).join('\n') || 'None yet',
+    result: (await load($)).map(b => `${b.name}: ${b.month}/${b.day}`).join('\n') || 'None yet',
   }))
 
   on('turn.start', async ($, e, next) => {
