@@ -28,6 +28,7 @@ end tell`
 const MONTHS = 'jan feb mar apr may jun jul aug sep oct nov dec'.split(' ')
 const DAY = 86_400_000
 const ENOUGH = "That's enough for now"
+const ACCENT = '#D97757' // Claude orange
 
 const first = (name: string) => name.split(' ')[0].toLowerCase()
 const any = <T,>(xs: T[]) => xs[Math.floor(Math.random() * xs.length)]
@@ -120,7 +121,7 @@ function until(b: Bday): number {
   const today = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate())
   const next = (y: number) => Math.round((Date.UTC(y, b.month - 1, b.day) - today) / DAY)
   const d = next(now.getFullYear())
-  return d < -3 ? next(now.getFullYear() + 1) : d
+  return d < -7 ? next(now.getFullYear() + 1) : d
 }
 
 function line(b: Bday): string {
@@ -131,7 +132,7 @@ function line(b: Bday): string {
   return `🎂 You missed ${b.name}'s birthday ${-d} day${d === -1 ? '' : 's'} ago`
 }
 
-// Birthday today: 40% of turns for its first 3 showings, then 5%. Otherwise 5% for the week ahead / 3 days behind.
+// Birthday today: 40% of turns for its first 3 showings, then 5%. Otherwise 5% for the week ahead / behind.
 async function pick($: Engine): Promise<Bday | null> {
   const near = await unwished($, (await load($)).filter(b => until(b) <= 7))
   const todays = near.filter(b => until(b) === 0)
@@ -147,7 +148,7 @@ async function pick($: Engine): Promise<Bday | null> {
   return b
 }
 
-// You've wished them once you press Text; reminders stop for 10 days
+// Text or dismiss means handled: reminders for them stop for 10 days
 async function unwished($: Engine, list: Bday[]): Promise<Bday[]> {
   const wished = ((await $.store.get('wished')) as Record<string, number> | undefined) ?? {}
   return list.filter(b => !(Date.now() - (wished[b.name] ?? 0) < 10 * DAY))
@@ -156,7 +157,12 @@ async function unwished($: Engine, list: Bday[]): Promise<Bday[]> {
 async function markWished($: Engine, b: Bday) {
   const wished = ((await $.store.get('wished')) as Record<string, number> | undefined) ?? {}
   await $.store.set('wished', { ...wished, [b.name]: Date.now() })
-  $.ui.invalidate('ui.render') // the spinner goes back to normal now
+  $.ui.invalidate('ui.render') // the card goes away now
+}
+
+// the card: someone whose birthday is today or in the last 7 days, not yet wished
+async function due($: Engine): Promise<Bday | undefined> {
+  return (await unwished($, await load($))).filter(b => until(b) <= 0).sort((a, b) => until(b) - until(a))[0]
 }
 
 // their number or email: from your conversations, else from Contacts
@@ -242,17 +248,20 @@ export const register: Register = on => {
     return next(e)
   })
 
-  // the spinner: a heads-up as its word, or on the day (and 2 days after) the whole line with a button to text them
-  on('ui.render', { component: 'Spinner' }, async ($, e, next) => {
-    const b = current
+  on('ui.render', { component: 'Spinner' }, ($, e, next) => next(current ? { ...e, props: { ...e.props, word: line(current) } } : e))
+
+  // the card above the prompt: on the day and up to a week late, until you text or dismiss
+  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    const b = e.props.hasSurvey ? undefined : await due($)
     if (!b) return next(e)
-    if (until(b) > 0 || until(b) < -2) return next({ ...e, props: { ...e.props, word: line(b) } })
     const { Box, Button, Text } = $.ui.resolve(e)
-    const press = () => ((current = null), textThem($, b))
     return (
-      <Box>
-        <Text>{line(b)} </Text>
-        <Button key="text" variant="primary" label={`Text ${b.name.split(' ')[0]}`} onPress={press} />
+      <Box columnGap={2} alignItems="center">
+        <Text>{line(b)}</Text>
+        <Box key="send" backgroundColor={ACCENT} paddingX={1}>
+          <Button key="text" plain label={`Text ${b.name.split(' ')[0]}`} onPress={() => textThem($, b)} />
+        </Box>
+        <Button key="dismiss" role="dismiss" label="Dismiss" onPress={() => markWished($, b)} />
       </Box>
     )
   })

@@ -1,6 +1,6 @@
 {
   "name": "goodfriend",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Be a GoodFriend and remember your friends' birthdays. Birthdays from Contacts (and optionally iMessage) show up in the Claude Code spinner.",
   "author": { "name": "Nico Christie" },
   "license": "MIT"
