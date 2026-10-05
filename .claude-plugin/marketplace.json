@@ -1,11 +1,14 @@
 {
   "name": "goodfriend",
-  "owner": { "name": "Nico Christie" },
+  "owner": {
+    "name": "Nico Christie"
+  },
   "plugins": [
     {
       "name": "goodfriend",
       "source": "./",
-      "description": "Be a GoodFriend and remember your friends' birthdays."
+      "description": "be a goodfriend and remember your friends' birthdays."
     }
-  ]
+  ],
+  "description": "the goodfriend mod for claude code"
 }
