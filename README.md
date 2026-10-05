@@ -20,6 +20,6 @@ Restart Claude, then run `/seed` to add birthdays for the people you text most. 
 - `/goodfriend`: see everyone's birthday
 - `/goodfriend add Maya Chen 10/7`: add one (or just tell Claude)
 
-Birthdays also come from Contacts. goodfriend sees who you talk to, never what you said, and keeps birthdays on your Mac.
+Birthdays also come from Contacts. goodfriend sees who you talk to, never what you said. `/seed` asks Claude to rank those names; birthdays stay on your Mac.
 
 MIT
